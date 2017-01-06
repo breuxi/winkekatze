@@ -17,19 +17,22 @@
 
 
 // this can stay test.mosquitto.org for the global clowder ;)
-char mqtt_server[255] = "test.mosquitto.org";
-char mqtt_port[6] = "1883";
-char cat_name[34] = "33c3katze";
+char mqtt_server[255] = "";
+char mqtt_port[6] = "";
+char mqtt_username[34] = "";
+char mqtt_password[34] = "";
+char cat_name[34] = "";
 
 // Servo directly connected to GPIO2
 Servo myservo;
 const int servoPin = 5;
 const int midPosition = 100;
 
-// LEDs connected to GPIO0. They are running with a lower voltage (around 4.3V) so the 3.3V output level is enough to trigger high
+// LEDs connected to GPIO5. They are running with a lower voltage (around 4.3V) so the 3.3V output level is enough to trigger high
 const int LEDPin =  14;
 const int numLEDs = 2;
 
+//Trigger pin for forced Setup
 const int TRIGGER_PIN = 4;
 
 
@@ -96,6 +99,8 @@ void readConfig() {
 
           strcpy(mqtt_server, json["mqtt_server"]);
           strcpy(mqtt_port, json["mqtt_port"]);
+          strcpy(mqtt_username, json["mqtt_username"]);
+          strcpy(mqtt_password, json["mqtt_password"]);
           strcpy(cat_name, json["cat_name"]);
 
         } else {
@@ -111,7 +116,7 @@ void readConfig() {
 }
 
 void setup() {
-  // if we didn't use the serial output we could gain 2 GPIOs. 
+  // if we didn't use the serial output we could gain 2 GPIOs.
   Serial.begin(115200);
 
   Serial.write("jimmkater booting....");
@@ -150,10 +155,13 @@ void setup_wifi() {
   // id/name placeholder/prompt default length
   WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
   WiFiManagerParameter custom_mqtt_port("port", "mqtt port", mqtt_port, 5);
+  WiFiManagerParameter custom_mqtt_username("mqtt_username", "mqtt username", mqtt_username, 34);
+  WiFiManagerParameter custom_mqtt_password("mqtt_password", "mqtt password", mqtt_password, 34);
   WiFiManagerParameter custom_cat_name("cat_name", "the cat's name", cat_name, 32);
 
-  
+
   WiFiManager wifiManager;
+
 
   eye_debug(BLUE);
   //set config save notify callback
@@ -163,11 +171,13 @@ void setup_wifi() {
   //add all your parameters here
   wifiManager.addParameter(&custom_mqtt_server);
   wifiManager.addParameter(&custom_mqtt_port);
+  wifiManager.addParameter(&custom_mqtt_username);
+  wifiManager.addParameter(&custom_mqtt_password);
   wifiManager.addParameter(&custom_cat_name);
 
   wifiManager.setConfigPortalTimeout(120);
 
-  if (!wifiManager.autoConnect("Winkekatze")) {
+  if (!wifiManager.autoConnect("Winkekatze", "geheimgeheim")) {
     eye_debug(RED);
     Serial.println("failed to connect and hit timeout");
     delay(3000);
@@ -179,6 +189,8 @@ void setup_wifi() {
   //read updated parameters
   strcpy(mqtt_server, custom_mqtt_server.getValue());
   strcpy(mqtt_port, custom_mqtt_port.getValue());
+  strcpy(mqtt_username, custom_mqtt_username.getValue());
+  strcpy(mqtt_password, custom_mqtt_password.getValue());
   strcpy(cat_name, custom_cat_name.getValue());
 
   //save the custom parameters to FS
@@ -188,6 +200,8 @@ void setup_wifi() {
     JsonObject& json = jsonBuffer.createObject();
     json["mqtt_server"] = mqtt_server;
     json["mqtt_port"] = mqtt_port;
+    json["mqtt_username"] = mqtt_username;
+    json["mqtt_password"] = mqtt_password;
     json["cat_name"] = cat_name;
 
     File configFile = SPIFFS.open("/config.json", "w");
@@ -206,19 +220,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if ( String(topic) == String(cat_name) + "/paw/command" ) {
     char* p = (char*)malloc(length + 1);
     p[length] = 0;
-  
+
     // Copy the payload to the new buffer
     memcpy(p, payload, length);
-  
+
     int ircode = atoi(p);
 
     myservo.attach(servoPin);
     delay(30);
-    
+
     if ( 0 <= ircode && ircode <= 170 ) {
       myservo.write(ircode);
     };
-  
+
     delay(300);
     myservo.detach();
     free(p);
@@ -229,7 +243,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   } else if ( String(topic) == String(cat_name)+"/eye/set" ) {
     char* p = (char*)malloc(length + 1);
     p[length] = 0;
-  
+
     // Copy the payload to the new buffer
     memcpy(p, payload, length);
 
@@ -250,7 +264,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
     free(p);
   }
-  
+
   client.publish((String(cat_name)+"/status").c_str(), "fishing");
 }
 
@@ -275,7 +289,7 @@ void wink() {
      myservo.write((int) pos);
      delay(15);
   };
-  
+
   myservo.write(midPosition);
   delay(20);
 
@@ -294,7 +308,7 @@ void reconnect() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (client.connect(cat_name, (String(cat_name) + "/connected").c_str(), 2, true, "0")) {
+    if (client.connect(cat_name, mqtt_username, mqtt_password, (String(cat_name) + "/connected").c_str(), 2, true, "0")) {
       Serial.println("connected");
       // Once connected, publish an announcement...
       client.publish((String(cat_name) + "/connected").c_str(), "1", true);

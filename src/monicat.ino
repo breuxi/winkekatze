@@ -3,7 +3,7 @@
 #include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
 
 #include <PubSubClient.h>
-#include <Servo.h>
+
 #include <stdlib.h>
 
 #include <Adafruit_NeoPixel.h>
@@ -15,25 +15,30 @@
 
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
 
+extern "C" {
+#include "user_interface.h"
+}
 
-// this can stay test.mosquitto.org for the global clowder ;)
 char mqtt_server[255] = "";
-char mqtt_port[6] = "";
+char mqtt_port[6] = "1883";
 char mqtt_username[34] = "";
 char mqtt_password[34] = "";
-char cat_name[34] = "";
+char cat_name[34] = "fridolin";
 
-// Servo directly connected to GPIO2
-Servo myservo;
-const int servoPin = 5;
-const int midPosition = 100;
+//original wink electronic, directly connected to D1
+
+const int servoPin = 5; //Wemos D1 Mini: "D1"
+
 
 // LEDs connected to GPIO5. They are running with a lower voltage (around 4.3V) so the 3.3V output level is enough to trigger high
-const int LEDPin =  14;
+const int LEDPin =  14;  //Wemos D1 Mini: "D5"
 const int numLEDs = 2;
 
 //Trigger pin for forced Setup
-const int TRIGGER_PIN = 4;
+const int TRIGGER_PIN = 4; //Wemos D1 Mini: "D2"
+
+//Timer, for changing color etc.
+os_timer_t ledTimer;
 
 
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(numLEDs, LEDPin, NEO_RGB + NEO_KHZ800);
@@ -48,11 +53,33 @@ long lastMsg = 0;
 char msg[50];
 int value = 0;
 
+//color stuff
 uint32_t eyecolor = 0;
+int ledmode = 0;
+int blinkCounter = 0;
+int blinkSpeed = 1;
+
+int ledrBrightness = 255;
+int ledgBrightness = 255;
+int ledbBrightness = 255;
+bool ledrFadein = true;
+bool ledgFadein = true;
+bool ledbFadein = true;
+bool ledrPower = true;
+bool ledgPower = true;
+bool ledbPower = true;
 
 void setup_wifi();
 void callback(char* topic, byte* payload, unsigned int length);
-void wink();
+void ledTimerCallback(void *pArg);
+
+void setEyeColor(){
+  for ( int i = 0; i < numLEDs; i++ ) {
+    pixels.setPixelColor(i, pixels.Color(ledrBrightness*ledrPower, ledgBrightness*ledgPower, ledbBrightness*ledbPower));
+  }
+  pixels.show();
+}
+
 
 void eye_debug(uint32_t color) {
   for ( int i = 0; i < numLEDs; i++ ) {
@@ -127,7 +154,11 @@ void setup() {
 
   eye_debug(GREEN);
 
+  //turn wink mechanism off
+  pinMode(servoPin, OUTPUT);
+  digitalWrite(servoPin, LOW);
 
+  //check if Setup is enforced (user pressed Button while booting...)
   pinMode(TRIGGER_PIN, INPUT);
 
   if ( digitalRead(TRIGGER_PIN) == LOW ) {
@@ -138,15 +169,17 @@ void setup() {
   readConfig();
   setup_wifi();
 
-  client.setServer(mqtt_server, 1883);
+  client.setServer(mqtt_server, atoi(mqtt_port));
   client.setCallback(callback);
 
-  myservo.attach(servoPin);
-  myservo.write(midPosition);
+
   eye_debug(pixels.Color(0,255,255));
   delay(50);
-  myservo.detach();
+
   eye_debug(pixels.Color(0,0,0));
+  //arm Timer
+  os_timer_setfn(&ledTimer, ledTimerCallback, NULL);
+  os_timer_arm(&ledTimer, 10, true);
 }
 
 void setup_wifi() {
@@ -165,6 +198,17 @@ void setup_wifi() {
 
   eye_debug(BLUE);
   //set config save notify callback
+
+  //also reset wifi settings when pressed...
+  if ( digitalRead(TRIGGER_PIN) == LOW ) {
+    wifiManager.resetSettings();
+  };
+
+  //if mqtt server is empty, we also need to enter setup:
+  if ( mqtt_server == ""){
+    wifiManager.resetSettings();
+  };
+
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setAPCallback(configModeCallback);
 
@@ -175,7 +219,7 @@ void setup_wifi() {
   wifiManager.addParameter(&custom_mqtt_password);
   wifiManager.addParameter(&custom_cat_name);
 
-  wifiManager.setConfigPortalTimeout(120);
+  wifiManager.setConfigPortalTimeout(600);
 
   if (!wifiManager.autoConnect("Winkekatze", "geheimgeheim")) {
     eye_debug(RED);
@@ -217,6 +261,10 @@ void setup_wifi() {
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Callback! Topic:  ");
+  Serial.print(String(topic));
+  Serial.print("\n");
+
   if ( String(topic) == String(cat_name) + "/paw/command" ) {
     char* p = (char*)malloc(length + 1);
     p[length] = 0;
@@ -224,23 +272,21 @@ void callback(char* topic, byte* payload, unsigned int length) {
     // Copy the payload to the new buffer
     memcpy(p, payload, length);
 
-    int ircode = atoi(p);
+    String winkstr(p);
 
-    myservo.attach(servoPin);
-    delay(30);
+    Serial.print("/paw/command Payload: ");
+    Serial.print(winkstr);
+    Serial.print("\n");
+    if ( winkstr == "wink" ) {
+      digitalWrite(servoPin, HIGH);
+    } else if ( winkstr == "nowink" ) {
+      digitalWrite(servoPin, LOW);
+    }
 
-    if ( 0 <= ircode && ircode <= 170 ) {
-      myservo.write(ircode);
-    };
-
-    delay(300);
-    myservo.detach();
     free(p);
   } else if ( String(topic) == String(cat_name) + "/command" || String(topic) == "winkekatze/allcats" ) {
-    wink();
-  } else if ( String(topic) == "fux/door/status" ) {
-    wink();
-  } else if ( String(topic) == String(cat_name)+"/eye/set" ) {
+    //TODO: do something that all cats need to do
+  } else if ( String(topic) == String(cat_name)+"/eye/color/set" ) {
     char* p = (char*)malloc(length + 1);
     p[length] = 0;
 
@@ -248,81 +294,189 @@ void callback(char* topic, byte* payload, unsigned int length) {
     memcpy(p, payload, length);
 
     String colstr(p);
+
+    Serial.print("Color Payload: ");
+    Serial.print(colstr);
+    Serial.print("\n");
     if ( colstr == "pink" ) {
-      eyecolor = pixels.Color(255, 0, 255);
+      ledrPower = true;
+      ledgPower = false;
+      ledbPower = true;
     } else if ( colstr == "red" ) {
-      eyecolor = pixels.Color(255, 0, 0);
+      ledrPower = true;
+      ledgPower = false;
+      ledbPower = false;
     } else if ( colstr == "green" ) {
-      eyecolor = pixels.Color(0, 255, 0);
+      ledrPower = false;
+      ledgPower = true;
+      ledbPower = false;
     } else if ( colstr == "blue" ) {
-      eyecolor = pixels.Color(0, 0, 255);
+      ledrPower = false;
+      ledgPower = false;
+      ledbPower = true;
     } else if ( colstr == "cyan" ) {
-      eyecolor = pixels.Color(0, 255, 255);
+      ledrPower = false;
+      ledgPower = true;
+      ledbPower = true;
     } else if ( colstr == "yellow" ) {
-      eyecolor = pixels.Color(255, 255, 0);
+      ledrPower = true;
+      ledgPower = true;
+      ledbPower = false;
+    } else if ( colstr == "dark" ) {
+      ledrPower = false;
+      ledgPower = false;
+      ledbPower = false;
+    } else if ( colstr == "white" ) {
+      ledrPower = true;
+      ledgPower = true;
+      ledbPower = true;
+    }
+
+    //set color based on globals.
+    setEyeColor();
+
+    free(p);
+  } else if ( String(topic) == String(cat_name)+"/eye/mode/set" ) {
+    char* p = (char*)malloc(length + 1);
+    p[length] = 0;
+
+    // Copy the payload to the new buffer
+    memcpy(p, payload, length);
+
+    String modestr(p);
+
+    Serial.print("Mode Payload: ");
+    Serial.print(modestr);
+    Serial.print("\n");
+    if ( modestr == "solid" ) {
+      //set solid colors
+      ledmode = 0 ;
+      // ensure full brigthness
+      ledrBrightness = 255;
+      ledgBrightness = 255;
+      ledbBrightness = 255;
+      //set color based on globals.
+      setEyeColor();
+    } else if ( modestr == "warp" ) {
+      ledmode = 1;
+      // ensure zero brigthness at start.
+      ledrBrightness = 0;
+      ledgBrightness = 0;
+      ledbBrightness = 0;
+      //eyecolor will be set in ledTimer callback, not here.
+    } else if ( modestr == "blink" ) {
+      ledmode = 2;
+      //eyecolor will be set in ledTimer callback, not here.
     }
 
     free(p);
+  } else if ( String(topic) == String(cat_name)+"/eye/speed/set" ) {
+    char* p = (char*)malloc(length + 1);
+    p[length] = 0;
+
+    // Copy the payload to the new buffer
+    memcpy(p, payload, length);
+
+    String speedstr(p);
+
+    Serial.print("Speed Payload: ");
+    Serial.print(speedstr);
+    Serial.print("\n");
+    if ( speedstr == "slow" ) {
+      blinkSpeed = 1;
+    } else if ( speedstr == "med" ) {
+      blinkSpeed = 3;
+    } else if ( speedstr == "fast" ) {
+      blinkSpeed = 5;
+    }
+    free(p);
   }
+
+
 
   client.publish((String(cat_name)+"/status").c_str(), "fishing");
 }
 
-void wink() {
-  const float pi = 3.14;
-  const float w = 2*pi/800;
+void ledTimerCallback(void *pArg){
+  if (ledmode == 0){
+    // do nothing. nothing blinky in this mode.
 
-  for ( int i = 0; i < numLEDs; i++) {
-    pixels.setPixelColor(i, eyecolor);
+    return;
+  } else if (ledmode == 1){
+    //leds are pulsing
+    if (ledrBrightness >= 250) {ledrFadein = false;}
+    if (ledrBrightness <= 5) {ledrFadein = true;}
+    if (ledrFadein){ledrBrightness += blinkSpeed;}
+    else {ledrBrightness -= blinkSpeed;}
+
+    if (ledgBrightness >= 250) {ledgFadein = false;}
+    if (ledgBrightness <= 5) {ledgFadein = true;}
+    if (ledgFadein){ledgBrightness += blinkSpeed;}
+    else {ledgBrightness -= blinkSpeed;}
+
+    if (ledbBrightness >= 250) {ledbFadein = false;}
+    if (ledbBrightness <= 5) {ledbFadein = true;}
+    if (ledbFadein){ledbBrightness += blinkSpeed;}
+    else {ledbBrightness -= blinkSpeed;}
+
+    //set color based on globals.
+    setEyeColor();
+  } else if (ledmode ==2 ){
+    //normal blinky stuff
+    if (blinkCounter >= 120){
+      ledrBrightness = 255;
+      ledgBrightness = 255;
+      ledbBrightness = 255;
+    }
+    blinkCounter += blinkSpeed;
+    if (blinkCounter >= 240){
+      ledrBrightness = 0;
+      ledgBrightness = 0;
+      ledbBrightness = 0;
+      blinkCounter = 0;
+    }
+    //set color based on globals.
+    setEyeColor();
   }
-  pixels.show();
 
-  myservo.attach(servoPin);
-
-  delay(20);
-
-  myservo.write(midPosition);
-  delay(300);
-
-  for( float t = 0.0; t < 2000; t += 15 ) {
-     float pos = midPosition + 70.0*sin( w * t ) * pow(2.714, -(w/15.0) * t);
-     myservo.write((int) pos);
-     delay(15);
-  };
-
-  myservo.write(midPosition);
-  delay(20);
-
-  myservo.detach();
-
-  for ( int i = 0; i < numLEDs; i++) {
-    pixels.setPixelColor(i, pixels.Color(0, 0 ,0));
-  }
-  pixels.show();
-
-  // myservo.detach();
 }
 
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
+    Serial.print("mqtt_username:");
+    Serial.print(mqtt_username);
+    Serial.print(", mqtt_password:");
+    Serial.print(mqtt_password);
+    Serial.print(", mqtt_server:");
+    Serial.print(mqtt_server);
+    Serial.print("\n Attempting MQTT connection...");
+
     // Attempt to connect
     if (client.connect(cat_name, mqtt_username, mqtt_password, (String(cat_name) + "/connected").c_str(), 2, true, "0")) {
       Serial.println("connected");
+      eye_debug(pixels.Color(0,255,0));
+      delay(100);
+      eye_debug(pixels.Color(0,0,0));
       // Once connected, publish an announcement...
       client.publish((String(cat_name) + "/connected").c_str(), "1", true);
       // ... and resubscribe
       client.subscribe( ( String(cat_name) + "/paw/command").c_str() );
       client.subscribe( (String(cat_name) + "/command" ).c_str() );
       client.subscribe("winkekatze/allcats");
-      client.subscribe( (String(cat_name) + "/eye/set").c_str());
+      client.subscribe( (String(cat_name) + "/eye/color/set").c_str());
+      client.subscribe( (String(cat_name) + "/eye/mode/set").c_str());
+      client.subscribe( (String(cat_name) + "/eye/speed/set").c_str());
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" try again in 2 seconds");
+      eye_debug(pixels.Color(255,0,0));
+      delay(100);
+      eye_debug(pixels.Color(0,0,0));
       // Wait 2 seconds before retrying
-      delay(2000);
+      delay(1900);
     }
   }
 }

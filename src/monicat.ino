@@ -146,9 +146,9 @@ void setup() {
   // if we didn't use the serial output we could gain 2 GPIOs.
   Serial.begin(115200);
 
-  Serial.write("jimmkater booting....");
+  Serial.write("monicat starts");
 
-  eyecolor = pixels.Color(255, 0, 255);
+  eyecolor = pixels.Color(64, 64, 255);
 
   pixels.begin();
 
@@ -159,7 +159,7 @@ void setup() {
   digitalWrite(servoPin, LOW);
 
   //check if Setup is enforced (user pressed Button while booting...)
-  pinMode(TRIGGER_PIN, INPUT);
+  pinMode(TRIGGER_PIN, INPUT_PULLUP);
 
   if ( digitalRead(TRIGGER_PIN) == LOW ) {
     SPIFFS.format();
@@ -174,7 +174,7 @@ void setup() {
 
 
   eye_debug(pixels.Color(0,255,255));
-  delay(50);
+  delay(100);
 
   eye_debug(pixels.Color(0,0,0));
   //arm Timer
@@ -204,10 +204,7 @@ void setup_wifi() {
     wifiManager.resetSettings();
   };
 
-  //if mqtt server is empty, we also need to enter setup:
-  if ( mqtt_server == ""){
-    wifiManager.resetSettings();
-  };
+
 
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setAPCallback(configModeCallback);

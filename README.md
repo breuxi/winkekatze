@@ -3,7 +3,7 @@
 Code derived from https://github.com/themad/jimmykater
 
 ### Changes:
-* Keeps lights on. So, continiuous lighting.
+* Keeps lights on. So, continuous lighting.
 * More light effects
 * Keeps original waving mechanism. ( Instead of using a Servo )
 * mqtt authentication support (can be configured in wifi captive portal)
@@ -26,9 +26,9 @@ Code derived from https://github.com/themad/jimmykater
 Pinouts are currently set to a wemos d1 mini which fits nicely into such a cat. But I guess any 8266 excep a ESP01 will do it somehow. 
 
 * 8266 : Wemos D1 Mini
-  * at least thee GPIOs:
-    * Force Setup Button
-    * LED Data input
+  * at least three GPIOs:
+    * "Force Setup" Button
+    * LED Data input (only one for both leds, both could(!) be controlled individually, anyway.
     * Waving "electronic" from Cat :)
 * pushbutton ( "force setup button")
 * Cat : 22cm (~9 inch) lucky cat

@@ -38,6 +38,7 @@ Pinouts are currently set to a wemos d1 mini which fits nicely into such a cat. 
 
 Original lucky cat electronic can directly be driven by gpio (4-10mAh).
 
+![Circuit Diagram](monicat.jpg)
 
 Code needs to be wiped through. A lot of Spaghetti and globals layin on the ground...
 

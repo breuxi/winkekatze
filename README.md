@@ -36,6 +36,8 @@ Pinouts are currently set to a wemos d1 mini which fits nicely into such a cat. 
 * 220 Ohm Resistor in Data line to the LEDs.
 * A lot of hot glue.
 
+The Sketch uses the famous {WifiManager}(https://github.com/tzapu/WiFiManager). If you press the "force setup button" while powering the device, it'll loose all of it's settings and will fall back into WifiManager's AP mode.
+
 Original lucky cat electronic can directly be driven by gpio (4-10mAh).
 
 ![Circuit Diagram](monicat.jpg)

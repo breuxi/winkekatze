@@ -42,5 +42,6 @@ Original lucky cat electronic can directly be driven by gpio (4-10mAh).
 
 Code needs to be wiped through. A lot of Spaghetti and globals layin on the ground...
 
+Blog Post here: https://www.datenwalze.de/post/monicat/ 
 
 

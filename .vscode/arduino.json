@@ -1,0 +1,7 @@
+{
+    "board": "esp8266:esp8266:d1_mini_lite",
+    "configuration": "CpuFrequency=80,FlashSize=1M64,LwIPVariant=v2mss536,Debug=Disabled,DebugLevel=None____,UploadSpeed=921600",
+    "port": "/dev/cu.wchusbserial14340",
+    "sketch": "src/monicat.ino",
+    "output": "../ArduinoOutput"
+}

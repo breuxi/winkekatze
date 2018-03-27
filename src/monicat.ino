@@ -1,18 +1,14 @@
 #include <FS.h>   // SPIFFS Filesystem
-
 #include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
-
 #include <PubSubClient.h>
-
 #include <stdlib.h>
-
-#include <Adafruit_NeoPixel.h>
+#include "FastLED.h"
+FASTLED_USING_NAMESPACE
 
 // WifiManager
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
-
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
 
 extern "C" {
@@ -26,73 +22,68 @@ char mqtt_password[34] = "";
 char cat_name[34] = "fridolin";
 
 //original wink electronic, directly connected to D1
-
 const int servoPin = 5; //Wemos D1 Mini: "D1"
 
-
 // LEDs connected to GPIO5. They are running with a lower voltage (around 4.3V) so the 3.3V output level is enough to trigger high
-const int LEDPin =  14;  //Wemos D1 Mini: "D5"
-const int numLEDs = 2;
+#if defined(FASTLED_VERSION) && (FASTLED_VERSION < 3001000)
+#warning "Requires FastLED 3.1 or later; check github for latest code."
+#endif
 
+#define DATA_PIN    14
+//#define CLK_PIN   4
+#define LED_TYPE    WS2811
+#define COLOR_ORDER RGB
+#define NUM_LEDS    2
+CRGB leds[NUM_LEDS];
+#define BRIGHTNESS          96
+#define FRAMES_PER_SECOND  120
+#define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 //Trigger pin for forced Setup
 const int TRIGGER_PIN = 4; //Wemos D1 Mini: "D2"
 
 //Timer, for changing color etc.
 os_timer_t ledTimer;
 
-
-Adafruit_NeoPixel pixels = Adafruit_NeoPixel(numLEDs, LEDPin, NEO_RGB + NEO_KHZ800);
-
-auto RED = pixels.Color(255,0,0);
-auto GREEN = pixels.Color(0, 255,0);
-auto BLUE = pixels.Color(0, 0, 255);
-
 WiFiClient espClient;
 PubSubClient client(espClient);
 long lastMsg = 0;
 char msg[50];
 int value = 0;
+//for whatever reasons auto typedef didnt work...
+void juggle();
+void bpm();
+void sinelon();
+void confetti();
+void addGlitter( fract8 chanceOfGlitter);
+void rainbowWithGlitter();
+void rainbow();
 
-//color stuff
-uint32_t eyecolor = 0;
-int ledmode = 0;
-int blinkCounter = 0;
-int blinkSpeed = 1;
 
-int ledrBrightness = 255;
-int ledgBrightness = 255;
-int ledbBrightness = 255;
-bool ledrFadein = true;
-bool ledgFadein = true;
-bool ledbFadein = true;
-bool ledrPower = true;
-bool ledgPower = true;
-bool ledbPower = true;
+typedef void (*SimplePatternList[])();
+SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
+
+uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
+uint8_t gHue = 0; // rotating "base color" used by many of the patterns
+bool gColorcycle = 0;
 
 void setup_wifi();
 void callback(char* topic, byte* payload, unsigned int length);
 void ledTimerCallback(void *pArg);
 
-void setEyeColor(){
-  for ( int i = 0; i < numLEDs; i++ ) {
-    pixels.setPixelColor(i, pixels.Color(ledrBrightness*ledrPower, ledgBrightness*ledgPower, ledbBrightness*ledbPower));
-  }
-  pixels.show();
-}
-
-
-void eye_debug(uint32_t color) {
-  for ( int i = 0; i < numLEDs; i++ ) {
-    pixels.setPixelColor(i, color);
-  }
-  pixels.show();
+void eye_debug(struct CRGB pixel_color) {
+  Serial.println("Running Eye Debug");
+  for(int dot = 0; dot < NUM_LEDS; dot++) {
+            leds[dot] = pixel_color;
+            FastLED.show();
+        }
+  Serial.println("finishing Eye Debug");
 };
 
 //flag for saving data
 bool shouldSaveConfig = false;
 
 void configModeCallback(WiFiManager *myWiFiManager) {
-  eye_debug(pixels.Color(255,0,255));
+  eye_debug(CRGB::Cyan);
 }
 
 //callback notifying us of the need to save config
@@ -148,39 +139,47 @@ void setup() {
 
   Serial.write("monicat starts");
 
-  eyecolor = pixels.Color(64, 64, 255);
+  // tell FastLED about the LED strip configuration
+  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  //FastLED.addLeds<LED_TYPE,DATA_PIN,CLK_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
 
-  pixels.begin();
-
-  eye_debug(GREEN);
-
+  // set master brightness control
+  FastLED.setBrightness(BRIGHTNESS);
+  Serial.println("before 1st eye debug");
+  eye_debug(CRGB::Green);
+  Serial.println("after brightness control");
   //turn wink mechanism off
   pinMode(servoPin, OUTPUT);
   digitalWrite(servoPin, LOW);
-
+Serial.println("after servoPin setting");
   //check if Setup is enforced (user pressed Button while booting...)
   pinMode(TRIGGER_PIN, INPUT_PULLUP);
 
   if ( digitalRead(TRIGGER_PIN) == LOW ) {
+    Serial.println("erasing filesystem");
     SPIFFS.format();
     ESP.eraseConfig();
   };
-
+Serial.println("before readConfig");
   readConfig();
+  Serial.println("will setup wifi now");
   setup_wifi();
 
   client.setServer(mqtt_server, atoi(mqtt_port));
   client.setCallback(callback);
 
 
-  eye_debug(pixels.Color(0,255,255));
+  eye_debug(CRGB::HotPink);
   delay(100);
 
-  eye_debug(pixels.Color(0,0,0));
+  eye_debug(CRGB::Black);
   //arm Timer
   os_timer_setfn(&ledTimer, ledTimerCallback, NULL);
   os_timer_arm(&ledTimer, 10, true);
+  Serial.println("end of setup");
 }
+
+
 
 void setup_wifi() {
   // The extra parameters to be configured (can be either global or just in the setup)
@@ -195,16 +194,14 @@ void setup_wifi() {
 
   WiFiManager wifiManager;
 
-
-  eye_debug(BLUE);
+  Serial.println("in setup wifi now");
+  eye_debug(CRGB::Blue);
   //set config save notify callback
 
   //also reset wifi settings when pressed...
   if ( digitalRead(TRIGGER_PIN) == LOW ) {
     wifiManager.resetSettings();
   };
-
-
 
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setAPCallback(configModeCallback);
@@ -219,7 +216,7 @@ void setup_wifi() {
   wifiManager.setConfigPortalTimeout(600);
 
   if (!wifiManager.autoConnect("Winkekatze", "geheimgeheim")) {
-    eye_debug(RED);
+    eye_debug(CRGB::Red);
     Serial.println("failed to connect and hit timeout");
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
@@ -283,7 +280,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     free(p);
   } else if ( String(topic) == String(cat_name) + "/command" || String(topic) == "winkekatze/allcats" ) {
     //TODO: do something that all cats need to do
-  } else if ( String(topic) == String(cat_name)+"/eye/color/set" ) {
+  } else if ( String(topic) == String(cat_name)+"/eye/hue/set" ) {
     char* p = (char*)malloc(length + 1);
     p[length] = 0;
 
@@ -291,47 +288,38 @@ void callback(char* topic, byte* payload, unsigned int length) {
     memcpy(p, payload, length);
 
     String colstr(p);
-
+//  if ( colstr == "pink" ) {
     Serial.print("Color Payload: ");
     Serial.print(colstr);
     Serial.print("\n");
-    if ( colstr == "pink" ) {
-      ledrPower = true;
-      ledgPower = false;
-      ledbPower = true;
-    } else if ( colstr == "red" ) {
-      ledrPower = true;
-      ledgPower = false;
-      ledbPower = false;
-    } else if ( colstr == "green" ) {
-      ledrPower = false;
-      ledgPower = true;
-      ledbPower = false;
-    } else if ( colstr == "blue" ) {
-      ledrPower = false;
-      ledgPower = false;
-      ledbPower = true;
-    } else if ( colstr == "cyan" ) {
-      ledrPower = false;
-      ledgPower = true;
-      ledbPower = true;
-    } else if ( colstr == "yellow" ) {
-      ledrPower = true;
-      ledgPower = true;
-      ledbPower = false;
-    } else if ( colstr == "dark" ) {
-      ledrPower = false;
-      ledgPower = false;
-      ledbPower = false;
-    } else if ( colstr == "white" ) {
-      ledrPower = true;
-      ledgPower = true;
-      ledbPower = true;
-    }
+    gHue = colstr.toInt() % 256 ;
+    free(p);
+  } else if ( String(topic) == String(cat_name)+"/eye/colorcycle/set" ) {
+    char* p = (char*)malloc(length + 1);
+    p[length] = 0;
 
-    //set color based on globals.
-    setEyeColor();
+    // Copy the payload to the new buffer
+    memcpy(p, payload, length);
 
+    String cyclestr(p);
+//  if ( colstr == "pink" ) {
+    Serial.print("colorcycle Payload: ");
+    Serial.print(cyclestr);
+    Serial.print("\n");
+    gColorcycle = cyclestr.toInt() % 2;
+    free(p);
+  } else if ( String(topic) == String(cat_name)+"/eye/brightness/set" ) {
+    char* p = (char*)malloc(length + 1);
+    p[length] = 0;
+
+    // Copy the payload to the new buffer
+    memcpy(p, payload, length);
+
+    String brtstr(p);
+    Serial.print("Brightness Payload: ");
+    Serial.print(brtstr);
+    Serial.print("\n");
+    FastLED.setBrightness(brtstr.toInt() % 256);
     free(p);
   } else if ( String(topic) == String(cat_name)+"/eye/mode/set" ) {
     char* p = (char*)malloc(length + 1);
@@ -345,96 +333,18 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.print("Mode Payload: ");
     Serial.print(modestr);
     Serial.print("\n");
-    if ( modestr == "solid" ) {
-      //set solid colors
-      ledmode = 0 ;
-      // ensure full brigthness
-      ledrBrightness = 255;
-      ledgBrightness = 255;
-      ledbBrightness = 255;
-      //set color based on globals.
-      setEyeColor();
-    } else if ( modestr == "warp" ) {
-      ledmode = 1;
-      // ensure zero brigthness at start.
-      ledrBrightness = 0;
-      ledgBrightness = 0;
-      ledbBrightness = 0;
-      //eyecolor will be set in ledTimer callback, not here.
-    } else if ( modestr == "blink" ) {
-      ledmode = 2;
-      //eyecolor will be set in ledTimer callback, not here.
-    }
-
-    free(p);
-  } else if ( String(topic) == String(cat_name)+"/eye/speed/set" ) {
-    char* p = (char*)malloc(length + 1);
-    p[length] = 0;
-
-    // Copy the payload to the new buffer
-    memcpy(p, payload, length);
-
-    String speedstr(p);
-
-    Serial.print("Speed Payload: ");
-    Serial.print(speedstr);
-    Serial.print("\n");
-    if ( speedstr == "slow" ) {
-      blinkSpeed = 1;
-    } else if ( speedstr == "med" ) {
-      blinkSpeed = 3;
-    } else if ( speedstr == "fast" ) {
-      blinkSpeed = 5;
-    }
-    free(p);
+    int mode = modestr.toInt();
+    gCurrentPatternNumber = mode % ARRAY_SIZE(gPatterns);
   }
-
-
-
   client.publish((String(cat_name)+"/status").c_str(), "fishing");
 }
 
 void ledTimerCallback(void *pArg){
-  if (ledmode == 0){
-    // do nothing. nothing blinky in this mode.
+    // Call the current pattern function once, updating the 'leds' array
+  gPatterns[gCurrentPatternNumber]();
 
-    return;
-  } else if (ledmode == 1){
-    //leds are pulsing
-    if (ledrBrightness >= 250) {ledrFadein = false;}
-    if (ledrBrightness <= 5) {ledrFadein = true;}
-    if (ledrFadein){ledrBrightness += blinkSpeed;}
-    else {ledrBrightness -= blinkSpeed;}
-
-    if (ledgBrightness >= 250) {ledgFadein = false;}
-    if (ledgBrightness <= 5) {ledgFadein = true;}
-    if (ledgFadein){ledgBrightness += blinkSpeed;}
-    else {ledgBrightness -= blinkSpeed;}
-
-    if (ledbBrightness >= 250) {ledbFadein = false;}
-    if (ledbBrightness <= 5) {ledbFadein = true;}
-    if (ledbFadein){ledbBrightness += blinkSpeed;}
-    else {ledbBrightness -= blinkSpeed;}
-
-    //set color based on globals.
-    setEyeColor();
-  } else if (ledmode ==2 ){
-    //normal blinky stuff
-    if (blinkCounter >= 120){
-      ledrBrightness = 255;
-      ledgBrightness = 255;
-      ledbBrightness = 255;
-    }
-    blinkCounter += blinkSpeed;
-    if (blinkCounter >= 240){
-      ledrBrightness = 0;
-      ledgBrightness = 0;
-      ledbBrightness = 0;
-      blinkCounter = 0;
-    }
-    //set color based on globals.
-    setEyeColor();
-  }
+  // send the 'leds' array out to the actual LED strip
+  FastLED.show();
 
 }
 
@@ -453,25 +363,27 @@ void reconnect() {
     // Attempt to connect
     if (client.connect(cat_name, mqtt_username, mqtt_password, (String(cat_name) + "/connected").c_str(), 2, true, "0")) {
       Serial.println("connected");
-      eye_debug(pixels.Color(0,255,0));
+      eye_debug(CRGB::Green);
       delay(100);
-      eye_debug(pixels.Color(0,0,0));
+      eye_debug(CRGB::Black);
       // Once connected, publish an announcement...
       client.publish((String(cat_name) + "/connected").c_str(), "1", true);
       // ... and resubscribe
       client.subscribe( ( String(cat_name) + "/paw/command").c_str() );
       client.subscribe( (String(cat_name) + "/command" ).c_str() );
       client.subscribe("winkekatze/allcats");
-      client.subscribe( (String(cat_name) + "/eye/color/set").c_str());
+      client.subscribe( (String(cat_name) + "/eye/hue/set").c_str());
+      client.subscribe( (String(cat_name) + "/eye/brightness/set").c_str());
       client.subscribe( (String(cat_name) + "/eye/mode/set").c_str());
       client.subscribe( (String(cat_name) + "/eye/speed/set").c_str());
+      client.subscribe( (String(cat_name) + "/eye/colorcycle/set").c_str());
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" try again in 2 seconds");
-      eye_debug(pixels.Color(255,0,0));
+      eye_debug(CRGB::Red);
       delay(100);
-      eye_debug(pixels.Color(0,0,0));
+      eye_debug(CRGB::Black);
       // Wait 2 seconds before retrying
       delay(1900);
     }
@@ -483,4 +395,67 @@ void loop() {
     reconnect();
   }
   client.loop();
+  //if colorcycle is on, rotate colors
+  EVERY_N_MILLISECONDS( 20 ) { 
+    if(gColorcycle){
+      gHue++; 
+    } 
+  }
+}
+
+void rainbow()
+{
+  // FastLED's built-in rainbow generator
+  fill_rainbow( leds, NUM_LEDS, gHue, 7);
+}
+
+void rainbowWithGlitter()
+{
+  // built-in FastLED rainbow, plus some random sparkly glitter
+  rainbow();
+  addGlitter(80);
+}
+
+void addGlitter( fract8 chanceOfGlitter)
+{
+  if( random8() < chanceOfGlitter) {
+    leds[ random16(NUM_LEDS) ] += CRGB::White;
+  }
+}
+
+void confetti()
+{
+  // random colored speckles that blink in and fade smoothly
+  fadeToBlackBy( leds, NUM_LEDS, 10);
+  int pos = random16(NUM_LEDS);
+  leds[pos] += CHSV( gHue + random8(64), 200, 255);
+}
+
+void sinelon()
+{
+  // a colored dot sweeping back and forth, with fading trails
+  fadeToBlackBy( leds, NUM_LEDS, 20);
+  int pos = beatsin16( 13, 0, NUM_LEDS-1 );
+  leds[pos] += CHSV( gHue, 255, 192);
+}
+
+void bpm()
+{
+  // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
+  uint8_t BeatsPerMinute = 62;
+  CRGBPalette16 palette = PartyColors_p;
+  uint8_t beat = beatsin8( BeatsPerMinute, 64, 255);
+  for( int i = 0; i < NUM_LEDS; i++) { //9948
+    leds[i] = ColorFromPalette(palette, gHue+(i*2), beat-gHue+(i*10));
+  }
+}
+
+void juggle() {
+  // eight colored dots, weaving in and out of sync with each other
+  fadeToBlackBy( leds, NUM_LEDS, 20);
+  byte dothue = 0;
+  for( int i = 0; i < 8; i++) {
+    leds[beatsin16( i+7, 0, NUM_LEDS-1 )] |= CHSV(dothue, 200, 255);
+    dothue += 32;
+  }
 }
